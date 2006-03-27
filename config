@@ -23,6 +23,7 @@ do_help() {
   echo "  write, write flash : writes changes to flash"
   echo "  write <file>       : writes changes to <file>"
   echo "  write -            : writes changes to stdout (for use in scripts)"
+  echo "  save               : alias for 'write flash'"
   echo "  send tftp://url/   : uploads a config via tftp"
   echo "  read <file>        : read configuration from <file>"
   echo "  read -             : read configuration from stdin (for use in scripts)"
@@ -201,8 +202,12 @@ do_read() {
   esac
 }
 
+# may be called with service name in $1 and instance name in $2. Starts vi on the
+# first line related to the service and instance.
 do_edit() {
-  vi /etc/config.rc
+  local line
+  line=$(grep -m1 -n "^[[:space:]]*service[[:space:]]\+$1[[:space:]]*$2" /etc/config.rc|cut -f1 -d:)
+  vi ${line+-c ":$line"} /etc/config.rc
 }
 
 arg0="$0"
@@ -212,6 +217,7 @@ case "$cmd" in
   edit)    do_edit "$@" ;;
   changes) do_changes "$@" ;;
   write)   do_write "$@" ;;
+  save)    do_write flash ;;
   send)    do_send "$@" ;;
   read)    do_read "$@" ;;
   fetch)   do_fetch "$@" ;;
