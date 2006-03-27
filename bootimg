@@ -1,0 +1,155 @@
+#!/bin/sh
+
+bootimage_save() {
+  local ver err
+  local tmp="$1"
+
+  ver=$(update-boot-image -n -v -q "$tmp")
+  err=$?
+  if [ $err -ne 0 ]; then
+    if [ $err = 2 ]; then
+      echo "This image is invalid, please try another one."
+    else
+      echo "Internal error. Please retry, reboot then report."
+    fi
+    return 1
+  fi
+
+  echo "Software image version $ver. Please wait while writing to flash..."
+  update-boot-image -q "$tmp"
+  err=$?
+
+  if [ $err -gt 0 ]; then
+    case $err in
+      2) echo "This image is invalid ! Please try another image." ;;
+      3) echo "Cannot access flash. Please format it from the Maintenance Kernel." ;;
+      4) echo "Cannot write to flash. Please unprotect or format it." ;;
+      5) echo "Failed to save the image. I need to delete the current image. The system"
+         echo "will be unusable until successful save. !!! DO NOT TURN THE POWER OFF !!!"
+         echo "Please wait for write completion. This can take one minute..."
+         if ! update-boot-image -f -q "$tmp"; then
+           echo;echo "Failed again. You should reformat the partition from the Maintenance Kernel."
+         else
+           echo;echo "Image saved successfully. It will be used at next reboot."
+           err=0
+         fi
+         ;;
+      *) do_prompt "Internal error. Please retry, reboot then report." ;;
+    esac
+  else
+    echo "Image saved successfully. It will be used at next reboot."
+  fi
+  return $err
+}
+
+do_help() {
+  echo "Usage: ${arg0##*/} <command> [args...]"
+  echo "Valid commands :"
+  echo "  read <file>        : read boot image from <file>"
+  echo "  read -             : read boot image from stdin (for use in scripts)"
+  echo "  fetch proto://url/ : downloads a boot image (tftp, http)"
+}
+
+do_fetch() {
+  local proto server defp port file tmp err ver
+
+  file="$1"; proto=""; server=""; port=""
+  [ -z "${file##*://*}" ] && proto="${file%%://*}"
+  file="${file#*://}" ; proto="${proto:-tftp}"
+
+  case "$proto" in
+    tftp) defp=69;;
+    http) defp=80;;
+    *) echo "Unsupported protocol for fetch operation : $proto";return 1;;
+  esac
+
+  [ -z "${file##*/*}" ] && server="${file%%/*}"
+  if [ -n "$server" ]; then
+    file="/${file#*/}"
+  fi
+  [ -z "${server##*:*}" ] && port="${server#*:}"
+  server="${server%%:*}" ; port="${port:-$defp}"
+  if [ -z "$server" ]; then
+    read -p "Enter server address for $proto download : " server
+    if [ -z "$server" ]; then echo "Aborting."; return 1; fi
+  fi
+  if [ -z "$file" ]; then
+    read -p "Enter file location on $server : " file
+    if [ -z "$file" ]; then echo "Aborting."; return 1; fi
+  fi
+
+  file="${file#/}"
+  #echo "proto=$proto server=$server port=$port file=$file"
+  echo "Fetching $proto://$server:$port/$file ..."
+
+  rm -rf /tmp/.bootimg.*.* 2>/dev/null
+  tmp="/tmp/.bootimg.$$.$RANDOM"
+  while ! mkdir -m 0700 $tmp; do
+    tmp="/tmp/.bootimg.$$.$RANDOM"
+  done
+  tmp="$tmp/fetch"
+
+  rm -f "$tmp"
+  if [ "$proto" = "tftp" ]; then
+    tftp "$server" "$port" -c get "$file" "$tmp"
+  else
+    ( exec <>/dev/tcp/$server/$port && 
+      printf "GET /$file HTTP/1.0\r\nHost: $server:$port\r\n\r\n" >&0 &&
+      while read -t 10 rep; do
+        if [ ${#rep} -lt 2 ]; then
+          dd of="$tmp" 2>/dev/null
+          break
+        fi
+      done 
+    )
+  fi
+  if [ ! -s "$tmp" ]; then
+    echo "Error during transfer. Aborting."
+    rm -f "$tmp" ; rmdir "${tmp%/*}"
+    return 1
+  fi
+  echo "Transfer complete."
+
+  bootimage_save "$tmp"
+  err=$?
+  rm -f "$tmp" ; rmdir "${tmp%/*}"
+  return $err
+}
+
+
+do_read() {
+  local src err tmp
+
+  src="$1"
+  shift
+
+  case "$src" in
+    "") do_help; return 1;;
+    "-")
+	rm -rf /tmp/.bootimg.*.* 2>/dev/null
+	tmp="/tmp/.bootimg.$$.$RANDOM"
+	while ! mkdir -m 0700 $tmp; do
+	    tmp="/tmp/.bootimg.$$.$RANDOM"
+	done
+	tmp="$tmp/read"; rm -f "$tmp"
+	dd of="$tmp" && bootimage_save "$tmp" ; err="$?"
+	rm -f "$tmp" ; rmdir "${tmp%/*}"
+	return $err
+	;;
+    *)  bootimage_save "$src" ;;
+  esac
+}
+
+arg0="$0"
+cmd="$1"
+shift
+case "$cmd" in
+  read)    do_read "$@" ;;
+  fetch)   do_fetch "$@" ;;
+  *)
+    do_help "$@"
+    [ "$cmd" = "help" -o "$cmd" = "-h" ]
+    exit $?
+    ;;
+esac
+
