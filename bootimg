@@ -1,5 +1,11 @@
 #!/bin/sh
 
+# This script tries to fetch a boot image from various sources, and updates the
+# system with it if possible. It can also automatically fetch an updated
+# version for the current software branch. It returns 0 if an update has been
+# performed, 1 if there was an error, and 2 if the system is already up to date
+# (which means that there's no reason to reboot).
+
 bootimage_save() {
   local ver err
   local tmp="$1"
@@ -48,12 +54,58 @@ do_help() {
   echo "  read <file>        : read boot image from <file>"
   echo "  read -             : read boot image from stdin (for use in scripts)"
   echo "  fetch proto://url/ : downloads a boot image (tftp, http)"
+  echo "  fetch update       : automatically downloads the best update image"
+}
+
+# Performs an HTTP get request.
+# Warning: does not handle connection timeout.
+# server=$1 ; port=$2 ; absolute uri=$3; output_file=$4 (optionnal)
+# sends output on stdout. It returns :
+#  - 0 if everything's OK
+#  - 1 if a network error occured or if no header was sent.
+#  - 2 for return codes 3xx, 4xx or 5xx
+# This should be replaced by wget.
+do_http_get() {
+  ( exec <>/dev/tcp/$1/$2 && 
+    printf "GET $3 HTTP/1.0\r\nHost: $1:$2\r\n\r\n" >&0 &&
+    while read -t 10 rep; do
+      [ -n "$rep" -a -z "${rep##HTTP/1.? [345][0-9][0-9]*}" ] && exit 2
+      if [ ${#rep} -lt 2 ]; then
+        exec dd ${4:+"of=$4"}
+      fi
+    done
+    exit 1
+  ) 2>/dev/null
+}
+
+# usage: $0 <proto> <server> <port> <file> [<output>]
+do_network_get() {
+  local proto server port file output
+  proto="$1"; server="$2"; port="$3"; file="$4"; output="$5"
+  rm -f "$output"
+  if [ "$proto" = "tftp" ]; then
+    tftp "$server" "$port" -c get "$file" ${output:+"$output"}
+  else
+    do_http_get "$server" "$port" "/$file" ${output:+"$output"}
+  fi
 }
 
 do_fetch() {
-  local proto server defp port file tmp err ver
+  local proto server defp port file tmp err ver update
 
-  file="$1"; proto=""; server=""; port=""
+  file="$1"; proto=""; server=""; port=""; update=0
+
+  if [ "$file" = "update" ]; then
+    url="$(grep "^URL:" /usr/share/factory/version|cut -f2- -d' ')"
+    if [ -n "$url" ]; then
+      file="$url"
+      update=1
+    else
+      echo "Unknown update URL."
+      file=""
+    fi
+  fi
+
   [ -z "${file##*://*}" ] && proto="${file%%://*}"
   file="${file#*://}" ; proto="${proto:-tftp}"
 
@@ -69,18 +121,6 @@ do_fetch() {
   fi
   [ -z "${server##*:*}" ] && port="${server#*:}"
   server="${server%%:*}" ; port="${port:-$defp}"
-  if [ -z "$server" ]; then
-    read -p "Enter server address for $proto download : " server
-    if [ -z "$server" ]; then echo "Aborting."; return 1; fi
-  fi
-  if [ -z "$file" ]; then
-    read -p "Enter file location on $server : " file
-    if [ -z "$file" ]; then echo "Aborting."; return 1; fi
-  fi
-
-  file="${file#/}"
-  #echo "proto=$proto server=$server port=$port file=$file"
-  echo "Fetching $proto://$server:$port/$file ..."
 
   rm -rf /tmp/.bootimg.*.* 2>/dev/null
   tmp="/tmp/.bootimg.$$.$RANDOM"
@@ -89,20 +129,75 @@ do_fetch() {
   done
   tmp="$tmp/fetch"
 
-  rm -f "$tmp"
-  if [ "$proto" = "tftp" ]; then
-    tftp "$server" "$port" -c get "$file" "$tmp"
+  if [ "$update" = 1 ]; then
+    branch="$(grep "^Branch:" /usr/share/factory/version|cut -f2- -d' ')"
+    version="$(grep "^Version:" /usr/share/factory/version|cut -f2- -d' ')"
+    model="$(grep "^Model:" /usr/share/factory/version|cut -f2- -d' ')"
+    build="$(grep "^Build:" /usr/share/factory/version|cut -f2- -d' ')"
+    file="${file#/}"
+
+    echo "Checking for updates ..."
+    f1="$file"
+    do_network_get "$proto" "$server" "$port" "$f1/.maint.$model" "$tmp"
+    err=$?
+    if [ $err = 1 ]; then
+      # .maint.$model might not exist but must not return an error
+      echo "Error during transfer. Aborting."
+      rm -f "$tmp"; rmdir "${tmp%/*}"
+      return 1
+    fi
+
+    # the $tmp file might contain a subdirectory component
+    [ $err = 0 ] && f1="${f1}"/"$(head -1 "$tmp")"
+    do_network_get "$proto" "$server" "$port" "$f1/.update.$model" "$tmp"
+    err=$?
+    if [ $err -eq 2 ]; then
+      # .update.$model must exist
+      echo "Model=$model, Branch=$branch, Version=$version-$build"
+      echo "No update found for this model/branch combination. Contact your vendor."
+      rm -f "$tmp"; rmdir "${tmp%/*}"
+      return 1
+    elif [ $err -gt 0 ]; then
+      # .update.$model must exist
+      echo "Error during transfer. Aborting."
+      rm -f "$tmp"; rmdir "${tmp%/*}"
+      return 1
+    fi
+
+    # the "$tmp" file must now contain the file name relative to the
+    # $f1 directory, without its extensions. Eg: "al12k-1.0.1-1029".
+    f3="$(head -1 "$tmp")"
+    if [ -n "${f3##$model-*}" ]; then
+      echo "Fatal: wrong model for image $f3 ! Contact your vendor (your model is $model)."
+      rm -f "$tmp"; rmdir "${tmp%/*}"
+      return 1
+    fi
+
+    if [ "$f3" = "$model-$version-$build" ]; then
+      echo "System already up to date (version $version-$build). No update needed.".
+      rm -f "$tmp"; rmdir "${tmp%/*}"
+      return 2
+    fi
+
+    file="$f1/$f3.bin"
+    file="${file#/}"
+    echo "Fetching last update from $proto://$server:$port/ ..."
   else
-    ( exec <>/dev/tcp/$server/$port && 
-      printf "GET /$file HTTP/1.0\r\nHost: $server:$port\r\n\r\n" >&0 &&
-      while read -t 10 rep; do
-        if [ ${#rep} -lt 2 ]; then
-          dd of="$tmp" 2>/dev/null
-          break
-        fi
-      done 
-    )
+    # this is not an update
+    if [ -z "$server" ]; then
+      read -p "Enter server address for $proto download : " server
+      if [ -z "$server" ]; then echo "Aborting."; return 1; fi
+    fi
+    if [ -z "$file" ]; then
+      read -p "Enter file location on $server : " file
+      if [ -z "$file" ]; then echo "Aborting."; return 1; fi
+    fi
+    file="${file#/}"
+    echo "Fetching $proto://$server:$port/$file ..."
   fi
+
+  do_network_get "$proto" "$server" "$port" "$file" "$tmp"
+
   if [ ! -s "$tmp" ]; then
     echo "Error during transfer. Aborting."
     rm -f "$tmp" ; rmdir "${tmp%/*}"
