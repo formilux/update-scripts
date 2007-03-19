@@ -1,9 +1,7 @@
-if [ "$SHLVL" = "1" ] && ! /sbin/save-etc -q; then
+if [ "$SHLVL" = "1" ] && ! /sbin/save-etc -v -q; then
   echo "Warning! unsaved configuration changes exist in the following files :"
-  /sbin/save-etc -v -l
-  echo
+  /sbin/save-etc -v -l | sed -e 's/^/ - /'
   echo "Note: you should use 'config save' after any changes to avoid this warning."
-  echo
   while : ; do
     read -p "Do you still want to exit without saving (Yes/No/Save) ? "
     rep="${REPLY:0:1}"
