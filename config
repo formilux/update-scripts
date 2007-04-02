@@ -61,10 +61,11 @@ do_send() {
 
   case "$proto" in
     tftp) defp=69;;
-    *) echo "Unsupported protocol for fetch operation : $proto";return 1;;
+    *) echo "Unsupported protocol for send operation : $proto";return 1;;
   esac
 
-  [ -z "${file##*/*}" ] && server="${file%%/*}"
+  [ -n "${file}" -a -z "${file##*/*}" ] || file="${file}/"
+  server="${file%%/*}"
   if [ -n "$server" ]; then
     file="/${file#*/}"
   fi
@@ -74,9 +75,11 @@ do_send() {
     read -p "Enter server address for $proto download : " server
     if [ -z "$server" ]; then echo "Aborting."; return 1; fi
   fi
-  if [ -z "$file" ]; then
+  if [ -z "${file%%*/}" ]; then
+    tmp="${file}$(uname -n)-$(date +%Y%m%d-%H%M).bin"
+    echo "Using $tmp as the default remote file name."
     read -p "Enter file location on $server : " file
-    if [ -z "$file" ]; then echo "Aborting."; return 1; fi
+    [ -z "$file" ] && file="$tmp"
   fi
 
   rm -rf /tmp/.config.*.* 2>/dev/null
@@ -98,7 +101,7 @@ do_send() {
   echo "Sending current configuration to $proto://$server:$port/$file ..."
 
   if [ "$proto" = "tftp" ]; then
-    if ! tftp "$server" "$port" -c put "$tmp" "$file"; then
+    if ! tftp "$server" "$port" -c put "$tmp" "${file#/}"; then
       echo "Error during transfer. Aborting."
       rm -f "$tmp" ; rmdir "${tmp%/*}"
       return 1
