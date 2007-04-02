@@ -18,16 +18,16 @@ config_restore() {
 do_help() {
   echo "Usage: ${arg0##*/} <command> [args...]"
   echo "Valid commands :"
-  echo "  edit               : edits system configuration (/etc/config.rc)."
-  echo "  changes [ -q ]     : displays a list of files that have changed."
-  echo "  write, write flash : writes changes to flash"
-  echo "  write <file>       : writes changes to <file>"
-  echo "  write -            : writes changes to stdout (for use in scripts)"
-  echo "  save               : alias for 'write flash'"
-  echo "  send tftp://url/   : uploads a config via tftp"
-  echo "  read <file>        : read configuration from <file>"
-  echo "  read -             : read configuration from stdin (for use in scripts)"
-  echo "  fetch proto://url/ : downloads a config (tftp, http)"
+  echo "  edit                   : edits system configuration (/etc/config.rc)."
+  echo "  changes [ -q ]         : displays a list of files that have changed."
+  echo "  write, write flash     : writes changes to flash"
+  echo "  write <file>           : writes changes to <file>"
+  echo "  write -                : writes changes to stdout (for use in scripts)"
+  echo "  save                   : alias for 'write flash'"
+  echo "  send tftp://url/       : uploads a config via tftp"
+  echo "  read <file>            : read configuration from <file>"
+  echo "  read -                 : read configuration from stdin (for use in scripts)"
+  echo "  fetch proto://url/     : downloads a config (tftp, http)"
 }
 
 do_write() {
