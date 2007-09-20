@@ -78,6 +78,55 @@ do_http_get() {
   ) 2>/dev/null
 }
 
+# Performs an HTTP get request via proxy.
+# Warning: does not handle connection timeout.
+# server=$1 ; port=$2 ; absolute uri=$3; output_file=$4 (optionnal)
+# http_proxy=$5 (optionnal default $http_proxy)
+# sends output on stdout. It returns :
+#  - 0 if everything's OK
+#  - 1 if a network error occured or if no header was sent.
+#  - 2 for return codes 3xx, 4xx or 5xx
+# This should be replaced by wget.
+do_http_proxy_get() {
+  # get proxy
+  local proxy_url="${5:-$http_proxy}"
+  # remove classical http_proxy definition
+  proxy_url="${proxy_url#http://}"
+  proxy_url="${proxy_url%/}"
+  # check proxy value
+  [ -n "${proxy_url//[0-9:.]/}" ] \
+    && echo "bad proxy ${5:-$http_proxy}" && return 1
+
+  # split proxy value in each component
+  local proxy_server="${proxy_url##*@}"
+  local proxy_port="${proxy_server#*:}"
+  proxy_server="${proxy_server%:*}"
+  [ "$proxy_port" = "$proxy_server" ] && proxy_port=8080
+
+  # auth value
+  local proxy_auth="${proxy_url%@*}"
+  # TODO support of proxy auth
+  # need b64 function to encode proxy_auth in base64
+  [ "$proxy_auth" = "$proxy_url" ] \
+    && proxy_auth="" \
+    || proxy_auth=$(: base64 "$proxy_auth")
+
+  # connect via proxy
+  ( exec <>/dev/tcp/$proxy_server/$proxy_port &&
+    ( printf "GET http://$1:$2$3 HTTP/1.0\r\n"
+      printf "Host: $1:$2\r\n"
+      [ -n "$proxy_auth" ] && printf "WWW-Authenticate: $proxy_auth\r\n"
+      printf "\r\n" ) >&0 &&
+    while read -t 10 rep; do
+      [ -n "$rep" -a -z "${rep##HTTP/1.? [345][0-9][0-9]*}" ] && exit 2
+      if [ ${#rep} -lt 2 ]; then
+        exec dd ${4:+"of=$4"}
+      fi
+    done
+    exit 1
+  ) 2>/dev/null
+}
+
 # usage: $0 <proto> <server> <port> <file> [<output>]
 do_network_get() {
   local proto server port file output
@@ -85,6 +134,8 @@ do_network_get() {
   rm -f "$output"
   if [ "$proto" = "tftp" ]; then
     tftp "$server" "$port" -c get "$file" ${output:+"$output"}
+  elif [ -n "$http_proxy" ] ; then
+    do_http_proxy_get "$server" "$port" "/$file" ${output:+"$output"}
   else
     do_http_get "$server" "$port" "/$file" ${output:+"$output"}
   fi
