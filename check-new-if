@@ -1,0 +1,102 @@
+#!/bin/sh
+
+awk -v f=/etc/config.rc '\
+	function insert_if(name) {
+		if (name == "" || decl[name] || disa[name] || done[name])
+			return;
+		if (prv[name] != "" && !decl[prv[name]] && !disa[prv[name]] && !done[prv[name]])
+			insert_if(prv[name]);
+		print "service network " name;
+		print "    auto on";
+		print "";
+		done[name]=1;
+		changed=1;
+	}
+	BEGIN {
+		old=""; changed=0;
+		while (getline < "/proc/net/dev")
+			if ($1 ~ ":$") {
+				sub(":", "", $1);
+				prv[$1]=old;
+				nxt[old]=$1;
+				decl[$1]=0;
+				disa[$1]=0;
+				done[$1]=0;
+				known[$1]=1;
+				old=$1;
+			}
+
+		line=0
+		while (getline < f) {
+			line++;
+			if ($1=="service" && $2 == "network" && $3 != "" && known[$3])
+				decl[$3]=line
+			# "no service" is not counted as an entry but still as present
+			if ($1=="no" && $2=="service" && $3 == "network" && $4 != "" && known[$4])
+				disa[$4]=line
+		}
+		close(f);
+
+		line=0; old=""; cur=""; new=0; started=0;
+		while (getline < f) {
+			line++;
+			if ($1=="no" && $2=="service") {
+				new=1; old=cur; cur="";
+				if ($3 == "network") { cur=$4; inside=1; } else inside=0;
+			}
+			else if ($1=="service") {
+				new=1; old=cur; cur="";
+				if ($2 == "network") { cur=$3; inside=1; } else inside=0;
+			}
+
+			while (new && started && nxt[old] != "" && known[nxt[old]] && !done[nxt[old]] && !disa[nxt[old]] && !decl[nxt[old]]) {
+				# We are after a section which is supposed to be followed by
+				# another one which never appears in the config file, so we
+				# must add it now. Note that this might be recursive.
+				print "service network " nxt[old];
+				print "    auto on";
+				print "";
+				done[nxt[old]]=1;
+				old=nxt[old];
+				changed=1;
+			}
+
+			# we may have to insert other interfaces before this one
+			if (new && inside && prv[cur] != "")
+				insert_if(prv[cur]);
+
+			if (new && inside && cur != "") {
+				# new interface declared.
+				# if this interface was previously set to "no" only but it exists now, we must
+				# add a section for it before it.
+				if (known[cur] && !done[cur] && disa[cur] && !decl[cur]) {
+					# print "service network " cur;
+					# print "    auto on";
+					# print "";
+					# changed=1;
+					done[cur]=1;
+				}
+			}
+
+			if (inside)
+				started=1;
+
+			new = 0
+			print $0;
+		}
+		close(f);
+
+		# We might have to finish
+		for (i in decl) {
+			if (!done[i] && !decl[i]) {
+				print "service network " i;
+				print "    auto on";
+				print "";
+				changed=1;
+			}
+		}
+		# we want to return 0 only when the file has changed
+		# print "changed=" changed;
+		exit(!changed);
+    }'
+
