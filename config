@@ -19,6 +19,10 @@ do_help() {
   echo "Usage: ${arg0##*/} <command> [args...]"
   echo "Valid commands :"
   echo "  edit                   : edits system configuration (/etc/config.rc)."
+  echo "  get <svc>[.<inst>] <var>[-<var>]         : retrieve a config key."
+  echo "  set <svc>[.<inst>] <var>[-<var>] <val>   : add/replace a config key."
+  echo "  add <svc>[.<inst>] <var>[-<var>] <val>   : add a config key."
+  echo "  del <svc>[.<inst>] <var>[-<var>] [<val>] : remove a config key."
   echo "  changes [ -q ]         : displays a list of files that have changed."
   echo "  write, write flash     : writes changes to flash"
   echo "  write <file>           : writes changes to <file>"
@@ -213,6 +217,249 @@ do_edit() {
   vi ${line+-c ":$line"} /etc/config.rc
 }
 
+# {get|set|add|del} [ -f {cfg_file|"-"} ] <section>[.<inst>] <var>[-<subvar>] [<value>...]
+# returns 0 on successful get, and on successful changes. Returns 1 on error or
+# if file remains unchanged.
+do_modify() {
+  local file="/etc/config.rc"
+  local act svc var val ret
+  local filei fileo
+
+  [ "$#" -ge 3 ] || { do_help; return 1; }
+
+  act=$1; shift
+
+  if [ "$1" = "-f" ]; then
+    [ -n "$2" ] || { do_help; return 1;}
+    file="$2"
+    shift 2
+  fi
+
+  if [ "$file" = "-" ]; then
+    filei="/dev/fd/3";
+    fileo="/dev/stdout";
+  elif [ -f "$file" ]; then
+    filei="${file}"
+    fileo="${file}-"
+    if ! cp -a "$file" "$fileo"; then
+      echo "Error: could not create temporary file '$fileo'."
+      return 1
+    fi
+  else
+      echo "Error: configuration file '$file' not found."
+      return 1
+  fi
+
+  [ "$#" -ge 2 ] || { do_help; return 1; }
+  svc="$1"; shift
+  var="$1"; shift
+  val="$*"; shift
+
+  [ -n "$var" ] || { do_help; return 1; }
+
+  awk -v filei="$filei" -v fileo="$fileo" -v act="$act" -v svc="$svc" -v var="$var" -v val="$val" -f - 3<&0 << "EOF"
+  # this script returns 0 if changes were made, 1 if OK with no changes, 2 on error.
+  function die(msg) {
+    print msg > "/dev/stderr"
+    exit(2);
+  }
+  BEGIN {
+    # check for service and instance name if any
+    dotpos = index(svc, ".");
+    if (dotpos) {
+	subsec = 1;
+	sec_name = substr(svc, 0, dotpos - 1);
+	sub_name = substr(svc, dotpos + 1);
+    }
+    else {
+	subsec = 0;
+	sec_name = svc;
+	sub_name = "";
+    }
+
+    var_fields = split(var, var_words, "-");
+    val_fields = split(val, val_words);
+    sec_matches = 0;
+    var_matches = 0;
+    val_matches = 0;
+    change_done = 0;
+
+    cur_line = 0; # start numbering at 1
+    last_sec_line = add_line = rep_line = 0;
+    last_sec_pref = add_pref = rep_pref = "";
+    end_of_desc = 0;
+    nbget = nbdel = 0;
+
+    # first pass : identify where to apply changes
+    while ((getline < filei) > 0) {
+      cur_line++;
+      saved_line[cur_line] = $0;
+
+      newsec=0;
+      if ($1 == "service" || $1 == "no" && $2 == "service") {
+        insec=0;
+        end_of_desc=0;
+      }
+
+      if ($1 == "service" && $2 == sec_name && (!subsec || $3 == sub_name)) {
+        newsec=1;
+        insec=1;
+        sec_matches++;
+      }
+      else if ($1 == "no" && $2 == "service" && $3 == sec_name &&
+              (!subsec || $4 == sub_name)) {
+        newsec=1;
+        insec=1;
+        sec_matches++;
+      }
+      if (sec_matches > 1)
+        die("Multiple matching sections");
+
+      if (insec && $1 != "" && (!end_of_desc || $1 !~ "^#")) {
+        # valid word still in current section, or initial comments. Keep
+        # formating in memory for later use.
+        last_sec_line = cur_line;
+        idx = index($0, $1);
+        last_sec_pref = (idx > 0) ? substr($0, 0, idx - 1) : "";
+        if (newsec)
+          last_sec_pref = last_sec_pref "    ";
+      }
+
+      if (!insec || newsec || $1 ~ "^#")
+        continue;
+
+      end_of_desc=1;
+
+      if ($1 == "")
+        continue;
+
+      # we have a variable here, check that it matches the whole variable prefix.
+      for (f = 1; f <= var_fields; f++) {
+        if (var_words[f] != "*" && var_words[f] != $f)
+          break;
+      }
+
+      if (f <= var_fields)
+        continue;
+
+      # we have the same variable name. In case of deletion, we may also want
+      # to compare values.
+
+      if (act == "del" && val_fields) {
+        for (f = 1; f <= val_fields; f++) {
+          if (val_words[f] != $(f+var_fields))
+            break;
+        }
+
+        if (f <= val_fields)
+          continue;
+      }
+
+      # we have the exact same variable and values
+      var_matches++;
+      if (var_matches > 1 && (act == "set"))
+        die("Multiple matching variables");
+
+      if (act == "get") {
+        get_line[nbget] = cur_line;
+        get_pref[nbget] = last_sec_pref;
+        nbget++;
+      }
+      else if (act == "set") {
+        rep_line = cur_line;
+        rep_pref = last_sec_pref;
+      }
+      else if (act == "del") {
+        del_line[nbdel] = cur_line;
+        del_pref[nbdel] = last_sec_pref;
+        nbdel++;
+      }
+      else if (act == "add") {
+        add_line = cur_line;
+        add_pref = last_sec_pref;
+      }
+    }
+    close(filei);
+
+    if (sec_matches == 0)
+      die("No matching section found");
+
+    if (act == "get") {
+      if (var_matches == 0) {
+        die("No matching variable");
+      }
+      else {
+        for (i = 0; i < nbget; i++)
+          printf("%s\n", substr(saved_line[get_line[i]], length(get_pref[i])+1));
+        exit(1); # no error, no change
+      }
+    }
+
+    if (var_matches == 0 && (act == "set" || act == "add")) {
+      add_line = last_sec_line;
+      add_pref = last_sec_pref;
+    }
+
+    # second pass: apply changes to the file if any. Standard input gets
+    # sent to stdout.
+
+    # recreate an empty file
+    printf("") > fileo;
+
+    for (line = 1; line <= cur_line; line++) {
+      for (i = 0; i < nbdel; i++) {
+        if (line == del_line[i])
+          break;
+      }
+      if (i < nbdel) {
+        # skip that line, it will automatically be deleted
+        change_done = 1;
+        continue;
+      }
+
+      if (line == rep_line) {
+        # we want to replace this line with the new one
+        printf("%s", rep_pref) >> fileo;
+        for (f = 1; f <= var_fields; f++) {
+          printf("%s", var_words[f]) >> fileo;
+          if (f < var_fields)
+            printf("%s", FS) >> fileo;
+        }
+        if (val > "")
+          printf(" %s", val) >> fileo;
+        printf("\n") >> fileo;
+        change_done = 1;
+        continue;
+      }
+
+      printf("%s\n", saved_line[line]) >> fileo;
+
+      if (line == add_line) {
+        # we want to add a line after this one
+        printf("%s", add_pref) >> fileo;
+        for (f = 1; f <= var_fields; f++) {
+          printf("%s", var_words[f]) >> fileo;
+          if (f < var_fields)
+            printf("%s", FS) >> fileo;
+        }
+        if (val > "")
+          printf(" %s", val) >> fileo;
+        printf("\n") >> fileo;
+        change_done = 1;
+      }
+    }
+    exit(!change_done);
+  }
+EOF
+  ret=$?
+  if [ "$file" != "-"  ]; then
+    [ $ret -eq 0 -a -s "$fileo" ] && mv "$fileo" "$file"
+    rm -f "$fileo"
+  fi
+  # we return an error only when test is >1
+  test $ret -le 1
+}
+
 arg0="$0"
 cmd="$1"
 shift
@@ -224,6 +471,7 @@ case "$cmd" in
   send)    do_send "$@" ;;
   read)    do_read "$@" ;;
   fetch)   do_fetch "$@" ;;
+  get|set|add|del) do_modify "$cmd" "$@" ;;
   *)
     do_help "$@"
     [ "$cmd" = "help" -o "$cmd" = "-h" ]
