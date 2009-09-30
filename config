@@ -16,7 +16,7 @@ config_restore() {
 }
 
 do_help() {
-  echo "Usage: ${arg0##*/} <command> [args...]"
+  echo "Usage: ${arg0##*/} [-f] <command> [args...]"
   echo "Valid commands :"
   echo "  edit                   : edits system configuration (/etc/config.rc)."
   echo "  get <svc>[.<inst>] <var>[-<var>]         : retrieve a config key."
@@ -38,7 +38,7 @@ do_write() {
   local target="$1"
   shift
   case "$target" in
-    flash|"") save-etc "$@" ;;
+    flash|"") save-etc ${FORCE:+-f }"$@" ;;
     "-")      save-etc -s ;;
     *)        save-etc -s > "$target" ;;
   esac
@@ -462,6 +462,15 @@ EOF
 
 arg0="$0"
 cmd="$1"
+while [ "${cmd:0:1}" = "-" ] ; do
+	case "${cmd:1:1}" in
+		f) FORCE=1 ;;
+		*) echo "Unknown option \'$cmd\'" ; return 1 ;;
+	esac
+	shift
+	cmd="$1"
+done
+
 shift
 case "$cmd" in
   edit)    do_edit "$@" ;;
