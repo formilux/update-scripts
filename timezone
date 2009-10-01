@@ -1,0 +1,67 @@
+#!/bin/bash
+
+case $1 in
+	"")
+		if [ ! -L "/etc/localtime" ] ; then
+			echo "custom"
+			exit 0
+		fi
+
+		tzone=$(readlink /etc/localtime)
+		tzone=${tzone#/etc/*}
+		tzone=${tzone%*\.tz}
+		tzone=${tzone//\./\/}
+		echo ${tzone}
+		;;
+	s*)
+		if [ "$2" != "custom" ] ; then
+			tzone=$2
+			if [ ! -e "/usr/share/zoneinfo/$tzone" ] ; then
+				echo "Error, timezone '$2' not found."
+				exit 1
+			fi
+
+
+			if [ -L "/etc/localtime" ] ; then
+				tzoneold=$(readlink /etc/localtime)
+				rm -f $tzoneold 2>/dev/null
+			fi
+
+			rm -f /etc/localtime 2>/dev/null
+			cp /usr/share/zoneinfo/$tzone /etc/${tzone//\//\.}.tz
+			chmod 644 /etc/${tzone//\//\.}.tz
+			ln -s /etc/${tzone//\//\.}.tz /etc/localtime
+		else
+			if [ ! -e "$3" ] ; then
+				echo "Error, timezone file '$3' not found."
+				exit 1
+			fi
+
+			if [ -L "/etc/localtime" ] ; then
+				tzoneold=$(readlink /etc/localtime)
+				rm -f $tzoneold 2>/dev/null
+			fi
+
+			rm -f /etc/localtime 2>/dev/null
+			cp $3 /etc/localtime 2>/dev/null
+			if [ "$?" != "0" ] ; then
+				echo "Install custom timezone error"
+			fi
+			chmod 644 /etc/localtime > 2/dev/null
+		fi
+
+		;;
+	l*)
+		( cd /usr/share/zoneinfo ;  find  * -xtype f )
+		;;
+
+	*)
+		echo "timezone                : show current timezone"
+		echo "timezone list           : available timezones"
+		echo "timezone set <timezone> : set timezone"
+		echo " 	ex: timezone set US/Hawaii"
+		echo "timezone set custom <filepath> : set timezone"
+		echo "  ex2: timezone set custom /tmp/mytimezonefile"
+esac
+
+
