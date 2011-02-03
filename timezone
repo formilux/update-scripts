@@ -52,7 +52,7 @@ case $1 in
 
 		;;
 	l*)
-		( cd /usr/share/zoneinfo ;  find  * -xtype f )
+		( cd /usr/share/zoneinfo 2>/dev/null && find  * -xtype f )
 		;;
 
 	*)
