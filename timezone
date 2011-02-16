@@ -47,7 +47,7 @@ case $1 in
 			if [ "$?" != "0" ] ; then
 				echo "Install custom timezone error"
 			fi
-			chmod 644 /etc/localtime > 2/dev/null
+			chmod 644 /etc/localtime 2>/dev/null
 		fi
 
 		;;
