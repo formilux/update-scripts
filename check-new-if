@@ -62,7 +62,7 @@ awk -v f=/etc/config.rc '\
 			}
 
 			# we may have to insert other interfaces before this one
-			if (new && inside && prv[cur] != "")
+			if (new && inside && cur != "lo" && prv[cur] != "")
 				insert_if(prv[cur]);
 
 			if (new && inside && cur != "") {
