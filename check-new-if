@@ -14,9 +14,8 @@ awk -v f=/etc/config.rc '\
 	}
 	BEGIN {
 		old=""; changed=0;
-		while (getline < "/proc/net/dev")
-			if ($1 ~ ":$") {
-				sub(":", "", $1);
+		while ("sort /proc/net/dev" | getline)
+			if (sub(":$", "", $1)) {
 				prv[$1]=old;
 				nxt[old]=$1;
 				decl[$1]=0;
