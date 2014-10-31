@@ -15,7 +15,7 @@ awk -v f=/etc/config.rc '\
 	BEGIN {
 		old=""; changed=0;
 		while ("sort /proc/net/dev" | getline)
-			if (sub(":$", "", $1)) {
+			if (sub(":$", "", $1) && ($1 == "lo" || $1 ~ "^eth[0-9].*")) {
 				prv[$1]=old;
 				nxt[old]=$1;
 				decl[$1]=0;
