@@ -1,0 +1,80 @@
+#!/bin/sh
+
+# sbin/glinet-button - read the reset button of the GL-Inet - v0.1 - 2014-11-16
+#
+# Copyright (C) 2014 Benoit Dolez & Willy Tarreau
+#       mailto: benoit@ant-computing.com,willy@ant-computing.com
+#
+# This program is licenced under GPLv2 ( http://www.gnu.org/licenses/gpl.txt )
+
+
+# This does the following things :
+#   1) blink the red light alone for one second indicating the period where
+#      the button is expected to be pressed ; after that it's too late.
+#   2) if the button was pressed, maintain the led in steady red position
+#      and wait for at most two seconds for the button to be released
+#   3) restore the leds to their original state
+#   4) report a success only if the button was pressed before the end of
+#      period 1 *AND* it was released before the end of period 2. That
+#      makes it suitable for use in factory reset without the risk of
+#      triggering it due to a stuck button or hardware malfunction.
+
+[ -e /sys/class/gpio/export ] || exit 1
+
+if [ ! -e /sys/class/gpio/gpio11/value ]; then
+	echo 11 > /sys/class/gpio/export
+fi
+
+[ -e /sys/class/gpio/gpio11/value ] || exit 1
+
+echo in > /sys/class/gpio/gpio11/direction
+
+# blink red led alone while waiting for the button. We force each of them on
+# before changing them so that sysfs detects the change.
+if [ -e /sys/devices/platform/leds-gpio/leds/gl-connect\:green\:lan/trigger ]; then
+	green=$(cut -f2 -d'[' /sys/devices/platform/leds-gpio/leds/gl-connect\:green\:lan/trigger | cut -f1 -d']')
+	[ "$green" != "none" ] || green=default-on  # address kernel bug
+	echo default-on > /sys/devices/platform/leds-gpio/leds/gl-connect\:green\:lan/trigger
+	echo none > /sys/devices/platform/leds-gpio/leds/gl-connect\:green\:lan/trigger
+fi
+
+if [ -e /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger ]; then
+	red=$(cut -f2 -d'[' /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger | cut -f1 -d']')
+	echo default-on > /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger
+	echo timer > /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger
+	echo 50 > /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/delay_on
+	echo 50 > /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/delay_off
+fi
+
+i=10
+while [ $((i--)) -gt 0 ]; do
+	read v < /sys/class/gpio/gpio11/value
+	[ "$v" = "1" ] && break
+	sleep 0.1
+done
+
+if [ -e /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger ]; then
+	echo default-on > /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger
+fi
+
+# wait for button release, but apply a timeout in case a hardware bug or
+# misconfiguration makes the input stuck to 1. In this case this would
+# only have delayed the total boot process by 2 seconds.
+i=20
+while [ $((i--)) -gt 0 ]; do
+	read r < /sys/class/gpio/gpio11/value
+	[ "$r" = "1" ] || break
+	sleep 0.1
+done
+
+if [ -e /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger ]; then
+	echo $red > /sys/devices/platform/leds-gpio/leds/gl-connect\:red\:wlan/trigger
+fi
+if [ -e /sys/devices/platform/leds-gpio/leds/gl-connect\:green\:lan/trigger ]; then
+	echo $green > /sys/devices/platform/leds-gpio/leds/gl-connect\:green\:lan/trigger
+fi
+
+# return exit code 0 if "v" matches a pressed button and "r" matches a
+# released button.
+test "$v" = "1" -a "$r" != "1"
+
