@@ -1,0 +1,24 @@
+#!/bin/bash
+
+[ -x /sbin/init.d/mouse ] || exit 0
+
+if dmesg | grep -qsi "^input.*USB.*Mouse" ; then
+	printf "Content-length: 0\n\n" | /sbin/init.d/mouse setsec 2>/dev/null
+        cat >> /etc/config.rc << EOF
+service mouse
+    type ps2
+    device /dev/input/mice
+
+EOF
+elif [ -e /proc/misc ] && grep -qs psaux /proc/misc ; then
+	printf "Content-length: 0\n\n" | /sbin/init.d/mouse setsec 2>/dev/null
+        cat >> /etc/config.rc << EOF
+service mouse
+    # PS/2 mouse can hang certain systems.
+    no autostart
+    device /dev/psaux
+
+EOF
+fi
+
+exit 0
