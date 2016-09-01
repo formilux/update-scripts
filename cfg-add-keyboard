@@ -1,0 +1,26 @@
+#!/bin/bash
+
+[ -x /sbin/init.d/keyboard ] || exit 0
+
+# is there a keyboard controller ?
+grep -qs ' 1:' /proc/interrupts || exit 0
+
+if grep -qsi qwerty /proc/cmdline ; then
+	printf "Content-length: 0\n\n" | /sbin/init.d/keyboard setsec 2>/dev/null
+	cat >> /etc/config.rc << EOF
+service keyboard
+    keymap us
+    keyrate 30
+
+EOF
+else
+	printf "Content-length: 0\n\n" | /sbin/init.d/keyboard setsec 2>/dev/null
+	cat >> /etc/config.rc << EOF
+service keyboard
+    keymap fr-pc
+    keyrate 30
+
+EOF
+fi
+
+exit 0
