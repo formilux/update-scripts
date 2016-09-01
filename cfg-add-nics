@@ -1,0 +1,15 @@
+#!/bin/bash
+
+[ -x /sbin/check-new-if ] || exit 0
+
+TMP=$(mktemp -q)
+[ -e "$TMP" ] || exit 1
+
+echo "Checking for new network interfaces."
+if /sbin/check-new-if >> "$TMP" &&
+   ! cmp -s /etc/config.rc "$TMP"; then
+	echo "Updating configuration."
+	cat "$TMP" > /etc/config.rc
+fi
+rm -f "$TMP"
+exit 0
