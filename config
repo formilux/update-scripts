@@ -251,6 +251,9 @@ do_modify() {
   if [ "$file" = "-" ]; then
     filei="/dev/fd/3";
     fileo="/dev/stdout";
+  elif [ -f "$file" -a "$act" = "get" ]; then
+    filei="${file}"
+    fileo="/dev/null"
   elif [ -f "$file" ]; then
     filei="${file}"
     fileo="${file}-"
@@ -465,7 +468,7 @@ do_modify() {
   }
 EOF
   ret=$?
-  if [ "$file" != "-"  ]; then
+  if [ "$file" != "-"  -a "$fileo" != "/dev/null" ]; then
     [ $ret -eq 0 -a -s "$fileo" ] && mv "$fileo" "$file"
     rm -f "$fileo"
   fi
