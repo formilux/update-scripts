@@ -59,9 +59,11 @@ do_changes() {
 
 do_diff() {
   if [ "$1" = "factory" ]; then
-    save-etc -d 2>/dev/null
+    save-etc -d
+    exit $?
   elif [ -z "$1" -o "$1" = "flash" ]; then
-    restore-etc -d 2>/dev/null
+    restore-etc -d
+    exit $?
   else
     echo "Need to specify either \"flash\", \"factory\", or nothing (defaults to flash)."
     exit 1
