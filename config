@@ -24,7 +24,7 @@ do_help() {
   echo "  add <svc>[.<inst>] <var>[-<var>] <val>   : add a config key."
   echo "  del <svc>[.<inst>] <var>[-<var>] [<val>] : remove a config key."
   echo "  changes [ -q ]         : displays a list of files that have changed."
-  echo "  diff [flash|factory]   : shows difference from these configs."
+  echo "  diff [[flash]|factory] : shows difference from these configs."
   echo "  write, write flash     : writes changes to flash"
   echo "  write <file>           : writes changes to <file>"
   echo "  write -                : writes changes to stdout (for use in scripts)"
@@ -60,10 +60,10 @@ do_changes() {
 do_diff() {
   if [ "$1" = "factory" ]; then
     save-etc -d 2>/dev/null
-  elif [ "$1" = "flash" ]; then
+  elif [ -z "$1" -o "$1" = "flash" ]; then
     restore-etc -d 2>/dev/null
   else
-    echo "Need to specify either \"flash\" or \"factory\""
+    echo "Need to specify either \"flash\", \"factory\", or nothing (defaults to flash)."
     exit 1
   fi
   exit 0
